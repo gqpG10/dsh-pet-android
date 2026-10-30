@@ -28,6 +28,7 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -110,6 +111,9 @@ public class PetService extends Service {
     private long lastFrameTime;
     private VelocityTracker vt;
     private SharedPreferences prefs;
+    private boolean linkMode;
+    private static volatile PetService inst;
+    private volatile boolean pluginMissing;
     private int affection;
     private Vibrator vib;
     private final Runnable resumeTick = new Runnable() {
@@ -213,6 +217,40 @@ public class PetService extends Service {
         return null;
     }
 
+    /** 联动开关（true=连接 DSH；false=只看桌宠）。 */
+    public static boolean linkModeOn(android.content.Context c) {
+        return c.getSharedPreferences("pet", android.content.Context.MODE_PRIVATE)
+                .getBoolean("linkMode", true);
+    }
+
+    public static void setLinkMode(android.content.Context c, boolean on) {
+        c.getSharedPreferences("pet", android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean("linkMode", on).apply();
+        PetService p = inst;
+        if (p != null) {
+            p.linkMode = on;
+            p.pluginMissing = false;
+        }
+        if (!on) discoveryStatus = "只看桌宠模式（不连 DSH）";
+        else requestRediscover();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        try {
+            Intent i = new Intent(this, PetService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+            else startService(i);
+        } catch (Exception ignored) {
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -226,6 +264,8 @@ public class PetService extends Service {
         } catch (Exception ignored) {
         }
         prefs = getSharedPreferences("pet", MODE_PRIVATE);
+        linkMode = prefs.getBoolean("linkMode", true);
+        inst = this;
         ep = DshEndpoint.cached(this);
         DshEndpoint c0 = ep;
         discoveryStatus = c0 == null ? "正在查找 DSH…" : "上次端点 " + c0.host + ":" + c0.port;
@@ -565,7 +605,7 @@ public class PetService extends Service {
         }
     }
 
-    private void refreshBalance(final StrCb cb) {
+    private void refreshBalance(final BalanceCb cb) {
         postJson(base() + "/balance", null, new StrCb() {
             @Override
             public void on(String b) {
@@ -575,18 +615,58 @@ public class PetService extends Service {
                         getJson(base() + "/state", new StrCb() {
                             @Override
                             public void on(String body) {
+                                if (body == null || body.trim().isEmpty()) {
+                                    if (cb != null) cb.on(null, null, false);
+                                    return;
+                                }
                                 String t = totalFromState(body);
+                                String provider = providerFromState(body);
                                 if (t != null) {
                                     lastBalanceText = t;
                                     lastShownBalance = t;
                                 }
-                                if (cb != null) cb.on(t);
+                                if (cb != null) cb.on(t, provider, true);
                             }
                         });
                     }
                 }, 1000);
             }
         });
+    }
+
+    /** 从 /state 的 sections.balance.data.provider 取供应商标识。 */
+    private String providerFromState(String body) {
+        try {
+            JSONObject root = new JSONObject(body);
+            JSONObject sec = root.optJSONObject("sections");
+            if (sec == null) return null;
+            JSONObject bal = sec.optJSONObject("balance");
+            if (bal == null) return null;
+            JSONObject data = bal.optJSONObject("data");
+            if (data == null) return null;
+            String p = data.optString("provider", null);
+            return (p == null || p.trim().isEmpty()) ? null : p;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 把插件暴露的 provider 标识翻成用户能看懂的名字（插件只给 provider，不给具体模型 id）。 */
+    private String modelLabel(String provider) {
+        if (provider == null) return "当前模型";
+        String p = provider.toLowerCase(Locale.US);
+        if (p.contains("deepseek-official")) return "DeepSeek 官方";
+        if (p.contains("deepseek-account")) return "DeepSeek 账号";
+        if (p.contains("anthropic") || p.contains("claude")) return "Claude";
+        if (p.contains("openai") || p.contains("gpt")) return "OpenAI";
+        if (p.contains("google") || p.contains("gemini")) return "Gemini";
+        return provider;
+    }
+
+    private static final String[] SAD_EMOJI = {"🥰", "🥺", "😢", "💦", "🫠"};
+
+    private String pickSadEmoji() {
+        return SAD_EMOJI[(int) (Math.random() * SAD_EMOJI.length)];
     }
 
     private void js(String code) {
@@ -705,7 +785,7 @@ public class PetService extends Service {
     }
 
     private void showMenu() {
-        final boolean dsha = hasDsha();
+        final boolean dsha = hasDsha() && linkMode && !pluginMissing;
         java.util.ArrayList<String> ls = new java.util.ArrayList<>();
         final java.util.ArrayList<Integer> ids = new java.util.ArrayList<>();
         if (dsha) {
@@ -737,11 +817,16 @@ public class PetService extends Service {
                             case 1:
                                 hideMenu();
                                 showBubble("查一下余额…", 1600);
-                                refreshBalance(new StrCb() {
+                                refreshBalance(new BalanceCb() {
                                     @Override
-                                    public void on(String t) {
-                                        if (t == null) showBubble("余额没查到，DSH 没响应", 2600);
-                                        else showBubble("余额 ¥" + t, 6000);
+                                    public void on(String t, String provider, boolean reachable) {
+                                        if (t != null) {
+                                            showBubble("余额 ¥" + t, 6000);
+                                        } else if (!reachable) {
+                                            showBubble("DSH 没连上，先打开 DSHA 吧🥺", 4000);
+                                        } else {
+                                            showBubble("无法查询「" + modelLabel(provider) + "」的余额" + pickSadEmoji(), 5200);
+                                        }
                                     }
                                 });
                                 break;
@@ -1156,6 +1241,11 @@ public class PetService extends Service {
         void on(String body);
     }
 
+    /** 余额查询回调：total 为空时用 reachable 区分“没连上”和“连上了但查不到”。 */
+    private interface BalanceCb {
+        void on(String total, String provider, boolean reachable);
+    }
+
     /** 后台 POST（body 可为 null），结果回主线程。 */
     private void postJson(final String url, final String body, final StrCb cb) {
         net.execute(new Runnable() {
@@ -1258,6 +1348,12 @@ public class PetService extends Service {
 
     private void pollLoop() {
         while (alive) {
+            if (!linkMode) {
+                discoveryStatus = "只看桌宠模式（不连 DSH）";
+                lastPoll = "只看桌宠";
+                sleepQuiet(2000);
+                continue;
+            }
             boolean deep = false;
             if (rediscoverRequested) {
                 rediscoverRequested = false;
@@ -1282,7 +1378,14 @@ public class PetService extends Service {
                     }
                 });
                 if (found == null) {
-                    discoveryStatus = "未找到 DSH，请先打开 DSHA";
+                    if (DshEndpoint.lastHint != null) {
+                        discoveryStatus = DshEndpoint.lastHint;
+                    } else if (DshEndpoint.openPortsSummary() != null) {
+                        discoveryStatus = "未找到 DSH；本机开放端口：" + DshEndpoint.openPortsSummary();
+                    } else {
+                        discoveryStatus = "未找到 DSH，请先打开 DSHA（DSHA 首页显示实际端口）";
+                    }
+                    pluginMissing = discoveryStatus != null && discoveryStatus.contains("插件没加载");
                     lastPoll = "未连接";
                     sleepQuiet(discoverBackoff);
                     discoverBackoff = Math.min(discoverBackoff * 2, 60000);
@@ -1293,6 +1396,7 @@ public class PetService extends Service {
                 discoveryStatus = "已连接 " + found.host + ":" + found.port + "（" + found.source + "）";
                 logPoll("endpoint -> " + found.host + ":" + found.port + " (" + found.source + ")");
                 pollFails = 0;
+                pluginMissing = false;
             }
 
             try {
@@ -1527,6 +1631,7 @@ public class PetService extends Service {
 
     @Override
     public void onDestroy() {
+        inst = null;
         running = false;
         alive = false;
         flying = false;

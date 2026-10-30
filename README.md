@@ -177,7 +177,7 @@ curl -s http://127.0.0.1:38859/dsh-pet-7340/state | head -c 120
 
 ## 安装
 
-1. 下载 `pet-5.3.1.apk`（见文末「下载」）；
+1. 下载 `pet-5.4.apk`（见文末「下载」）；
 2. 点击安装，首次需允许「安装未知应用」；
 3. 打开「桌宠」→ 点「授予悬浮窗权限」→ 在系统设置里允许「显示在其他应用上层」；
 4. Android 13+ 建议允许通知权限（前台服务通知，可设为静默）；
@@ -431,6 +431,7 @@ app/src/main/
 
 完整记录见 [CHANGELOG.md](CHANGELOG.md)，近期版本：
 
+- **5.4** 「查看余额」区分“没连上 DSH”与“连上了但查不到余额”，后者提示 `无法查询「模型/供应商」的余额🥰`
 - **5.3.1** 赞赏入口移到 App 主界面，修复点击弹窗闪退（Service 无窗口 token）
 - **5.3** 新增赞赏码
 - **5.2** 只看桌宠开关、START_STICKY + onTaskRemoved 自重启、省电白名单按钮、插件缺失自动降级
@@ -466,10 +467,10 @@ app/src/main/
 
 ## 下载
 
-**最新版：v5.3.1（versionCode 39）**
+**最新版：v5.4（versionCode 40）**
 
 - GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
-- APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3.1/pet-5.3.1.apk>
+- APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.4/pet-5.4.apk>
 
 > 国内访问慢可以用酷安附件或网盘镜像。
 
@@ -478,9 +479,9 @@ app/src/main/
 文件校验：
 
 ```
-文件名：pet-5.3.1.apk
+文件名：pet-5.4.apk
 大小：55,717,504 字节
-MD5：44e8c0938e7e6e295dd06863aa3da0f9
+MD5：c7dde5bc0fcc77e824a5846f3610aefa
 ```
 
 安装前建议核对 MD5，避免下载到被二次打包的版本。

@@ -1,6 +1,22 @@
 # 更新日志
 
-本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格；`versionCode` 从 1.0 起每发一版递增 1（3.x 系列为 `versionCode = 21 + y`，4.x 为 `29 + x`，5.0 为 35，5.1 为 36，5.2 为 37，5.3 为 38，5.3.1 为 39）。
+本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 风格；`versionCode` 从 1.0 起每发一版递增 1（3.x 系列为 `versionCode = 21 + y`，4.x 为 `29 + x`，5.0 为 35，5.1 为 36，5.2 为 37，5.3 为 38，5.3.1 为 39，5.4 为 40）。
+
+## [5.4.0] - 2026-10-30
+
+### 变更
+
+- 「查看余额」不再把所有失败都归为一句“余额没查到，DSH 没响应”，改为区分三种情况：
+  - **没连上 DSH**（请求失败 / 拿不到 `/state`）→ 气泡 `DSH 没连上，先打开 DSHA 吧🥺`
+  - **连上了但查不到余额**（`/state` 正常、`wallets` 里没有 `total`）→ 气泡 `无法查询「DeepSeek 官方」的余额🥰`
+  - 正常 → `余额 ¥x.xx`
+- 新增 provider → 人话映射：`deepseek-official`→DeepSeek 官方、`deepseek-account`→DeepSeek 账号、含 `anthropic`/`claude`→Claude、含 `openai`/`gpt`→OpenAI、含 `google`/`gemini`→Gemini，其它原样显示
+- 表情从 `🥰 🥺 😢 💦 🫠` 中随机取一个
+
+### 说明
+
+- dsh-pet 插件在 `/state` 里只暴露 `provider`，不暴露具体模型 id，所以提示里显示的是供应商级别的名字
+- 回调接口由 `StrCb` 扩展为 `BalanceCb(total, provider, reachable)`，后续再补“按模型区分”时不用重写调用点
 
 ## [5.3.2] - 2026-10-30
 
