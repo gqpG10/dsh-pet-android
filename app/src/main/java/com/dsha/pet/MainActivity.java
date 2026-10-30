@@ -1,6 +1,7 @@
 package com.dsha.pet;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
@@ -15,6 +16,8 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.text.InputType;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -25,11 +28,18 @@ public class MainActivity extends Activity {
     private TextView debug;
     private TextView dshaValue;
     private TextView dshaBtn;
+    private TextView epValue;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
         @Override
         public void run() {
             if (debug != null) setDsh(PetService.lastPoll);
+            if (epValue != null) {
+                String st = PetService.discoveryStatus;
+                epValue.setText(st);
+                epValue.setTextColor(st != null && st.startsWith("已连接")
+                        ? 0xFF35B37E : 0xFF9A97B8);
+            }
             ui.postDelayed(this, 1000);
         }
     };
@@ -121,6 +131,12 @@ public class MainActivity extends Activity {
         rowDsha.addView(dshaValue);
         cards.addView(rowDsha, matchTop(dp(10)));
 
+        LinearLayout rowEp = row();
+        rowEp.addView(label("DSH 端点"), weightLp(1f));
+        epValue = value("查找中…", 0xFF9A97B8);
+        rowEp.addView(epValue);
+        cards.addView(rowEp, matchTop(dp(10)));
+
         // ---------- 主按钮 ----------
         TextView start = pill("启动桌宠", 0xFFFFFFFF, true);
         start.setOnClickListener(v -> startPet());
@@ -155,6 +171,37 @@ public class MainActivity extends Activity {
         dshaBtn.setOnClickListener(v -> openDshaDownload());
         dshaBtn.setVisibility(View.GONE);
         root.addView(dshaBtn, matchTop(dp(12)));
+
+        LinearLayout epBtns = new LinearLayout(this);
+        epBtns.setOrientation(LinearLayout.HORIZONTAL);
+        TextView redetect = pill("重新检测", 0xFF7B6BB5, false);
+        redetect.setOnClickListener(v -> {
+            if (PetService.running) {
+                PetService.requestRediscover();
+                setDsh("重新检测中…");
+            } else {
+                testDsh();
+            }
+        });
+        epBtns.addView(redetect, weightLp(1f));
+        TextView manualBtn = pill("手动填写", 0xFF7B6BB5, false);
+        LinearLayout.LayoutParams manualLp = weightLp(1f);
+        manualLp.leftMargin = dp(12);
+        manualBtn.setOnClickListener(v -> showManualDialog());
+        epBtns.addView(manualBtn, manualLp);
+        root.addView(epBtns, matchTop(dp(12)));
+
+        TextView deepBtn = pill("深度查找（全端口，较慢）", 0xFF7B6BB5, false);
+        deepBtn.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("深度查找")
+                .setMessage("会扫描 1024–65535 全部端口，通常 10–40 秒。只在自动查找失败时使用。")
+                .setPositiveButton("开始", (d, w) -> {
+                    PetService.requestDeepScan();
+                    setDsh("深度查找中…");
+                })
+                .setNegativeButton("取消", null)
+                .show());
+        root.addView(deepBtn, matchTop(dp(10)));
 
         TextView test = pill("测试 DSH 连接", 0xFF7B6BB5, false);
         test.setOnClickListener(v -> testDsh());
@@ -348,31 +395,33 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 String r;
-                try {
-                    java.net.HttpURLConnection c =
-                            (java.net.HttpURLConnection) new java.net.URL(PetService.STATE_URL)
-                                    .openConnection(java.net.Proxy.NO_PROXY);
-                    c.setConnectTimeout(2500);
-                    c.setReadTimeout(2500);
-                    c.setRequestProperty("Connection", "close");
-                    int code = c.getResponseCode();
-                    java.io.InputStream in = c.getInputStream();
-                    byte[] buf = new byte[400];
-                    int n = in.read(buf);
-                    boolean ok = code == 200 && n > 0;
-                    r = ok ? "OK 服务正常" : ("HTTP " + code + (n > 0 ? " " : " (空)"));
-                    in.close();
-                    c.disconnect();
-                } catch (Exception e) {
-                    r = "ERR " + e.getClass().getSimpleName();
-                    try {
-                        java.io.StringWriter sw = new java.io.StringWriter();
-                        e.printStackTrace(new java.io.PrintWriter(sw));
-                        java.io.FileOutputStream fo = openFileOutput("last_error.txt", MODE_PRIVATE);
-                        fo.write((r + "\n" + sw.toString()).getBytes("UTF-8"));
-                        fo.close();
-                    } catch (Exception ignored) {
-                    }
+                DshEndpoint cached = DshEndpoint.cached(MainActivity.this);
+                DshEndpoint found = null;
+                if (cached != null && DshEndpoint.probe(cached.host, cached.port, 600, 1200)) {
+                    found = cached;
+                }
+                if (found == null) {
+                    found = DshEndpoint.resolveBlocking(MainActivity.this, false,
+                            new DshEndpoint.Listener() {
+                                @Override
+                                public void onProgress(final String message) {
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            setDsh(message);
+                                        }
+                                    });
+                                }
+                            });
+                }
+                if (found != null) {
+                    r = "OK " + found.host + ":" + found.port;
+                    PetService.discoveryStatus = "已连接 " + found.host + ":" + found.port
+                            + "（" + found.source + "）";
+                } else {
+                    DshEndpoint c2 = DshEndpoint.cached(MainActivity.this);
+                    boolean dshAlive = c2 != null && DshEndpoint.looksLikeDsh(c2.host, c2.port);
+                    r = dshAlive ? "DSH 在跑，但桌宠插件没加载" : "未找到 DSH";
                 }
                 final String rr = r;
                 runOnUiThread(new Runnable() {
@@ -383,6 +432,60 @@ public class MainActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    private void showManualDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(22), dp(10), dp(22), 0);
+
+        String m = DshEndpoint.getManual(this);
+        String hostStr = "127.0.0.1";
+        String portStr = String.valueOf(DshEndpoint.DEFAULT_PORT);
+        if (m != null && m.contains(":")) {
+            String[] parts = m.split(":", 2);
+            hostStr = parts[0];
+            portStr = parts[1];
+        }
+
+        EditText host = new EditText(this);
+        host.setHint("主机，如 127.0.0.1");
+        host.setText(hostStr);
+        host.setInputType(InputType.TYPE_CLASS_TEXT);
+        box.addView(host);
+
+        EditText port = new EditText(this);
+        port.setHint("端口，如 38859");
+        port.setText(portStr);
+        port.setInputType(InputType.TYPE_CLASS_NUMBER);
+        box.addView(port);
+
+        new AlertDialog.Builder(this)
+                .setTitle("手动指定 DSH 地址")
+                .setMessage("留空主机或点「清除」可恢复自动查找。")
+                .setView(box)
+                .setPositiveButton("保存并检测", (d, w) -> {
+                    try {
+                        int p = Integer.parseInt(port.getText().toString().trim());
+                        String h = host.getText().toString().trim();
+                        if (h.isEmpty()) {
+                            DshEndpoint.setManual(this, null, 0);
+                        } else {
+                            DshEndpoint.setManual(this, h, p);
+                        }
+                        PetService.requestRediscover();
+                        setDsh("已保存，正在检测…");
+                    } catch (Exception e) {
+                        setDsh("端口格式不对");
+                    }
+                })
+                .setNeutralButton("清除", (d, w) -> {
+                    DshEndpoint.setManual(this, null, 0);
+                    PetService.requestRediscover();
+                    setDsh("已清除手动端点");
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void startPet() {

@@ -56,9 +56,22 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class PetService extends Service {
-    public static final String STATE_URL = "http://127.0.0.1:38859/dsh-pet-7340/state";
-    public static final String STATE_BASE = "http://127.0.0.1:38859/dsh-pet-7340";
     public static volatile String lastPoll = "未运行";
+    /** 端点状态，供主界面显示。 */
+    public static volatile String discoveryStatus = "未检测";
+    /** 由主界面触发重新发现 / 深度扫描。 */
+    public static volatile boolean rediscoverRequested = false;
+    public static volatile boolean deepScanRequested = false;
+    /** 服务是否在运行，供主界面判断按钮行为。 */
+    public static volatile boolean running = false;
+
+    public static void requestRediscover() {
+        rediscoverRequested = true;
+    }
+
+    public static void requestDeepScan() {
+        deepScanRequested = true;
+    }
     private static final String DSHA_PKG = "dsh.android.client";
 
     private WindowManager wm;
@@ -67,6 +80,11 @@ public class PetService extends Service {
     private Handler ui;
     private ExecutorService net;
     private volatile boolean alive = true;
+    /** 当前端点；null 表示还没找到。 */
+    private volatile DshEndpoint ep;
+    private int pollFails;
+    /** 找不到 DSH 时的退避时间，避免反复全量扫描。 */
+    private long discoverBackoff = 5000;
 
     private float downX, downY;
     private float petScale = 1f;
@@ -198,6 +216,7 @@ public class PetService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        running = true;
         float d = getResources().getDisplayMetrics().density;
         ui = new Handler(Looper.getMainLooper());
         net = Executors.newCachedThreadPool();
@@ -207,6 +226,9 @@ public class PetService extends Service {
         } catch (Exception ignored) {
         }
         prefs = getSharedPreferences("pet", MODE_PRIVATE);
+        ep = DshEndpoint.cached(this);
+        DshEndpoint c0 = ep;
+        discoveryStatus = c0 == null ? "正在查找 DSH…" : "上次端点 " + c0.host + ":" + c0.port;
         affection = prefs.getInt("affection", 0);
         petScale = prefs.getFloat("petScale", 1f);
         vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
@@ -544,13 +566,13 @@ public class PetService extends Service {
     }
 
     private void refreshBalance(final StrCb cb) {
-        postJson(PetService.STATE_BASE + "/balance", null, new StrCb() {
+        postJson(base() + "/balance", null, new StrCb() {
             @Override
             public void on(String b) {
                 ui.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        getJson(PetService.STATE_BASE + "/state", new StrCb() {
+                        getJson(base() + "/state", new StrCb() {
                             @Override
                             public void on(String body) {
                                 String t = totalFromState(body);
@@ -784,7 +806,7 @@ public class PetService extends Service {
 
     private void doWhisper(final boolean retry) {
         showBubble("让我想想…", 1800);
-        postJson(STATE_BASE + "/whisper?pet=main&surface=web", null, new StrCb() {
+        postJson(base() + "/whisper?pet=main&surface=web", null, new StrCb() {
             @Override
             public void on(String b) {
                 if (b == null) {
@@ -809,7 +831,7 @@ public class PetService extends Service {
                 }
                 // 显示模式不是 web/both 时服务端会拒绝，自动改成 both 再重试一次
                 if (retry && b.contains("pet-not-displayed")) {
-                    postJson(STATE_BASE + "/pet-display", "{\"id\":\"main\",\"display\":\"both\"}",
+                    postJson(base() + "/pet-display", "{\"id\":\"main\",\"display\":\"both\"}",
                             new StrCb() {
                                 @Override
                                 public void on(String r) {
@@ -958,7 +980,7 @@ public class PetService extends Service {
                         final String id = ids[i - 1];
                         hideMenu();
                         String body = "{\"id\":\"main\",\"display\":" + JSONObject.quote(id) + "}";
-                        postJson(PetService.STATE_BASE + "/pet-display", body, new StrCb() {
+                        postJson(base() + "/pet-display", body, new StrCb() {
                             @Override
                             public void on(String b) {
                                 showBubble(b == null ? "显示位置没改成：DSH 接口没响应" : "显示位置已改为 " + id, 2400);
@@ -1236,28 +1258,88 @@ public class PetService extends Service {
 
     private void pollLoop() {
         while (alive) {
+            boolean deep = false;
+            if (rediscoverRequested) {
+                rediscoverRequested = false;
+                ep = null;
+                pollFails = 0;
+                DshEndpoint.invalidate(this);
+            }
+            if (deepScanRequested) {
+                deepScanRequested = false;
+                deep = true;
+                ep = null;
+                pollFails = 0;
+                DshEndpoint.invalidate(this);
+            }
+
+            if (ep == null) {
+                discoveryStatus = "正在查找 DSH…";
+                DshEndpoint found = DshEndpoint.resolveBlocking(this, deep, new DshEndpoint.Listener() {
+                    @Override
+                    public void onProgress(String message) {
+                        discoveryStatus = message;
+                    }
+                });
+                if (found == null) {
+                    discoveryStatus = "未找到 DSH，请先打开 DSHA";
+                    lastPoll = "未连接";
+                    sleepQuiet(discoverBackoff);
+                    discoverBackoff = Math.min(discoverBackoff * 2, 60000);
+                    continue;
+                }
+                discoverBackoff = 5000;
+                ep = found;
+                discoveryStatus = "已连接 " + found.host + ":" + found.port + "（" + found.source + "）";
+                logPoll("endpoint -> " + found.host + ":" + found.port + " (" + found.source + ")");
+                pollFails = 0;
+            }
+
             try {
-                String body = httpGet(STATE_URL);
+                String body = httpGet(ep.url("/state"));
                 if (body != null) {
                     lastPoll = "OK " + body.length() + "B";
                     logPoll(lastPoll);
+                    pollFails = 0;
                     handleState(body);
                 } else {
                     lastPoll = "HTTP 非 200";
                     logPoll(lastPoll);
+                    if (++pollFails >= 3) {
+                        ep = null;
+                        pollFails = 0;
+                        DshEndpoint.invalidate(this);
+                    }
                 }
             } catch (Exception e) {
                 lastPoll = "ERR " + e;
                 java.io.StringWriter sw = new java.io.StringWriter();
                 e.printStackTrace(new java.io.PrintWriter(sw));
                 logPoll(sw.toString());
+                if (++pollFails >= 3) {
+                    ep = null;
+                    pollFails = 0;
+                    DshEndpoint.invalidate(this);
+                }
             }
-            try {
-                Thread.sleep(2000);
-            } catch (InterruptedException e) {
-                break;
-            }
+            sleepQuiet(2000);
         }
+    }
+
+    private static void sleepQuiet(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ignored) {
+        }
+    }
+
+    /** 当前请求基址；没找到端点时退回缓存或默认端口。 */
+    private String base() {
+        DshEndpoint e = ep;
+        if (e != null) return e.base();
+        DshEndpoint c = DshEndpoint.cached(this);
+        if (c != null) return c.base();
+        return "http://127.0.0.1:" + DshEndpoint.DEFAULT_PORT + DshEndpoint.PATH;
     }
 
     private static String httpGet(String url) throws Exception {
@@ -1445,6 +1527,7 @@ public class PetService extends Service {
 
     @Override
     public void onDestroy() {
+        running = false;
         alive = false;
         flying = false;
         ui.removeCallbacks(flyTick);

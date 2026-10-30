@@ -5,7 +5,7 @@
 一只蓝发小女仆常驻在手机桌面上：会待机、会碎碎念、会显示 DSH 的工作状态和余额，可以拖着走、甩出去撞墙反弹、被你接住，单击会 Q 弹，长按还能呼出原生菜单。
 
 ![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
-![version](https://img.shields.io/badge/version-4.3-blue)
+![version](https://img.shields.io/badge/version-5.0-blue)
 ![size](https://img.shields.io/badge/APK-55.6MB-lightgrey)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -74,6 +74,7 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 | 自定义 | 大小调节 | 菜单「大小」→ 滑块 50%–200% 实时缩放，只影响宠物，不影响气泡和菜单 |
 | 稳定性 | 静默操纵 | 拖动 / 甩飞 / 点击期间冻结动画，只做物理运动，动作播完 1.2 秒后恢复随机待机 |
 | 适配 | 自动检测 DSHA | 没装 DSHA 时隐藏四项联动菜单，主界面给出下载入口；装了自动恢复 |
+| 适配 | 端点自动发现 | 手动指定 / 缓存 / 扫 30000–61000 / 深度全端口，握手校验后才采用，换设备、换端口都能连 |
 
 > **依赖提醒**：表中的「工作状态」「余额显示」「碎碎念」三项依赖 **DSHA**（DeepSeek Harness 的 Android 客户端，负责在本机跑起 DSH Web 服务）。
 > 没有 DSHA 时，宠物本体、Q 弹、甩飞、接住、好感、大小调节都正常，只是这三项拿不到数据。
@@ -87,11 +88,12 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 主界面（控制面板）从上到下：
 
 1. **头像卡**：圆形头像 + 「蓝毛小女仆」+「桌面陪伴 · 不需要 root」；
-2. **运行状态卡**：三行实时状态
+2. **运行状态卡**：四行实时状态
    - 悬浮窗权限：已授予（绿）/ 未授予（橙）
    - DSH 连接：OK 服务正常（绿）/ HTTP 错误（橙）
    - DSHA 客户端：已安装（绿）/ 未安装（橙）
-3. **按钮区**：启动桌宠（渐变主按钮）、停止桌宠 / 授予悬浮窗权限（并排）、测试 DSH 连接；
+   - DSH 端点：`已连接 127.0.0.1:38859（cache）` / `正在扫描…` / `未找到 DSH，请先打开 DSHA`
+3. **按钮区**：启动桌宠（渐变主按钮）、停止桌宠 / 授予悬浮窗权限（并排）、测试 DSH 连接、重新检测 / 手动填写（并排）、深度查找（全端口，较慢）；
 4. **玩法卡**：四行手势说明；
 5. **页脚**：版本号 + 「常驻不耗电 · 不依赖 ADB / Shizuku」。
 
@@ -141,7 +143,7 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 
 ## 安装
 
-1. 下载 `pet-4.3.apk`（见文末「下载」）；
+1. 下载 `pet-5.0.apk`（见文末「下载」）；
 2. 点击安装，首次需允许「安装未知应用」；
 3. 打开「桌宠」→ 点「授予悬浮窗权限」→ 在系统设置里允许「显示在其他应用上层」；
 4. Android 13+ 建议允许通知权限（前台服务通知，可设为静默）；
@@ -395,6 +397,7 @@ app/src/main/
 
 完整记录见 [CHANGELOG.md](CHANGELOG.md)，近期版本：
 
+- **5.0** DSH 端点自动发现：手动 / 缓存 / 本机扫描 / 深度查找四级发现，握手校验，断线自愈带动画退避
 - **4.3** 自动检测 DSHA：未安装时隐藏状态 / 余额 / 碎碎念，并在主界面与菜单给出下载入口
 - **4.2** 主界面重做：渐变背景、头像卡、状态卡、圆角按钮、玩法说明
 - **4.1** 修复点击 Q 弹后的位置漂移（浮点锚点 + 统一 `moveWindow`）
@@ -425,10 +428,10 @@ app/src/main/
 
 ## 下载
 
-**最新版：v4.3（versionCode 34）**
+**最新版：v5.0（versionCode 35）**
 
 - GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
-- 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v4.3/pet-4.3.apk>
+- 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.0/pet-5.0.apk>
 
 > 国内访问慢可以用酷安附件或网盘镜像。
 
@@ -437,9 +440,9 @@ app/src/main/
 文件校验：
 
 ```
-文件名：pet-4.3.apk
-大小：55,582,273 字节
-MD5：9ed0b37c42c1a09d7ae898db149795c7
+文件名：pet-5.0.apk
+大小：55,590,465 字节
+MD5：4f66124c6fcfefd2207129df03e93e2c
 ```
 
 安装前建议核对 MD5，避免下载到被二次打包的版本。
