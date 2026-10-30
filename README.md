@@ -71,7 +71,7 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 | 物理 | 甩飞 | 拖动后快速松手，宠物按速度飞出去，撞屏幕边缘真实反射，线性减速停稳 |
 | 物理 | 接住 | 飞行途中点一下即可接住，好感 +2 |
 | 养成 | 好感度 | 单击 +1、接住 +2，本地持久化，每 20 点升一级 |
-| 支持 | 赞赏作者 | 长按菜单「赞赏一下 ♥」弹出微信赞赏码，扫码请作者喝奶茶 |
+| 支持 | 赞赏作者 | 主界面「赞赏作者 ♥」弹出微信赞赏码，扫码请作者喝奶茶 |
 | 自定义 | 大小调节 | 菜单「大小」→ 滑块 50%–200% 实时缩放，只影响宠物，不影响气泡和菜单 |
 | 稳定性 | 静默操纵 | 拖动 / 甩飞 / 点击期间冻结动画，只做物理运动，动作播完 1.2 秒后恢复随机待机 |
 | 适配 | 自动检测 DSHA | 没装 DSHA 时隐藏四项联动菜单，主界面给出下载入口；装了自动恢复 |
@@ -231,7 +231,6 @@ sh /tmp/pet/dsh-pet-bridge/install.sh
 | 显示位置 ▸ | 总是 | 仅网页 / 仅桌面 / 两者 / 都不 |
 | 回到初始位置 | 总是 | 回到第一次出现的位置 |
 | 好感度 | 总是 | 显示 `♥ 好感 Lv.x  n 点` |
-| 赞赏一下 ♥ | 总是 | 弹出微信赞赏码，扫码支持作者 |
 | 退出桌宠 | 总是 | 关闭悬浮窗和前台服务 |
 
 ### 大小调节
@@ -422,7 +421,8 @@ app/src/main/
 
 完整记录见 [CHANGELOG.md](CHANGELOG.md)，近期版本：
 
-- **5.3** 新增「赞赏一下 ♥」：长按菜单弹出微信赞赏码
+- **5.3.1** 赞赏入口移到 App 主界面，修复点击弹窗闪退（Service 无窗口 token）
+- **5.3** 新增赞赏码
 - **5.2** 只看桌宠开关、START_STICKY + onTaskRemoved 自重启、省电白名单按钮、插件缺失自动降级
 - **5.1** IPv6 回环扫描、自动全端口兜底、失败状态三档提示
 - **5.0** DSH 端点自动发现：手动 / 缓存 / 本机扫描 / 深度查找四级发现，握手校验，断线自愈带动画退避
@@ -456,11 +456,11 @@ app/src/main/
 
 ## 下载
 
-**最新版：v5.3（versionCode 38）**
+**最新版：v5.3.1（versionCode 39）**
 
 - GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
-- APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3/pet-5.3.apk>
-- 插件直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3/dsh-pet-bridge-6.0.0-min.zip>
+- APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3.1/pet-5.3.1.apk>
+- 插件直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3.1/dsh-pet-bridge-6.0.0-min.zip>
 
 > 国内访问慢可以用酷安附件或网盘镜像。
 
@@ -469,9 +469,9 @@ app/src/main/
 文件校验：
 
 ```
-文件名：pet-5.3.apk
-大小：55,713,408 字节
-MD5：970590b29d27e6eb8a526883be388705
+文件名：pet-5.3.1.apk
+大小：55,717,504 字节
+MD5：44e8c0938e7e6e295dd06863aa3da0f9
 
 文件名：dsh-pet-bridge-6.0.0-min.zip
 大小：1,429,130 字节
