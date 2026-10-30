@@ -427,10 +427,10 @@ app/src/main/
 
 **最新版：v4.3（versionCode 34）**
 
-- GitHub Releases：`https://github.com/<你的用户名>/dsh-pet-android/releases/latest`
-- 直链：`https://github.com/<你的用户名>/dsh-pet-android/releases/download/v4.3/pet-4.3.apk`
+- GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
+- 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v4.3/pet-4.3.apk>
 
-> 把上面的 `<你的用户名>` 换成你的 GitHub 用户名即可；国内访问慢可以用酷安附件或网盘镜像。
+> 国内访问慢可以用酷安附件或网盘镜像。
 
 配套的 DSHA（状态 / 余额 / 碎碎念依赖它）：<https://github.com/DSH-APP/DSHA>
 
