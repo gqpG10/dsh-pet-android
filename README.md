@@ -144,16 +144,22 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 
 ## 数据插件（状态 / 余额 / 碎碎念的数据源）
 
-三项联动数据来自一个跑在 DSH 里的轻量插件 **dsh-pet-bridge**（约 1.8 MB，源码在 [plugin/](plugin/)，说明见 [plugin/README.md](plugin/README.md)）：
+这三项数据来自 **dsh-pet** 插件。想要「查看余额 / 跟随思考状态」，装这个官方插件就行，本仓库**不再自带插件**：
+
+- 仓库与文档：<https://github.com/PC2005-cloud/dsh-pet>
+- 安装：DSHA 的「插件」页搜索 `dsh-pet` 安装（或按仓库 README 手动装），装完**重启 DSHA**
+
+**关键设置：安装后把显示位置选成「窗口和桌面都不显示」（配置项 `display: "none"`）。**
+
+这样插件只当数据源，不会在网页或桌面上再冒出一只宠物；桌宠 App 照旧从它的路由取工作状态、余额和碎碎念。
+
+验证：
 
 ```sh
-# 装插件（DSHA 终端里执行）
-unzip -o /sdcard/Download/DSHA/dsh-pet-bridge-6.0.0-min.zip -d /tmp/pet
-sh /tmp/pet/dsh-pet-bridge/install.sh
-# 重启 DSHA
+curl -s http://127.0.0.1:38859/dsh-pet-7340/state | head -c 120
 ```
 
-验证：`curl -s http://127.0.0.1:38859/dsh-pet-7340/state` 返回带 `"sections"` 的 JSON。
+返回带 `"sections"` 的 JSON 即正常。
 
 | 接口 | 用途 |
 | --- | --- |
@@ -161,13 +167,17 @@ sh /tmp/pet/dsh-pet-bridge/install.sh
 | `POST /dsh-pet-7340/balance` | 触发余额刷新 |
 | `POST /dsh-pet-7340/whisper?pet=main&surface=web` | 生成碎碎念 |
 
-> 插件派生自 dsh-pet，已裁掉网页端、Electron 助手、53 MB 动画素材与 50 MB 依赖，只保留三条数据路由。没装插件时桌宠本体照常，只是这三项拿不到数据。
+> 说明：状态与余额不校验显示模式，`none` 下照常可用；碎碎念要求显示模式覆盖 `web`，若提示 `pet-not-displayed`，App 会自动切到 `both` 重试一次。
+>
+> 如果喜欢这个插件，欢迎去 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 给作者点个 ⭐ **Star**，感谢插件作者的支持。
+
+没装插件时桌宠本体照常（动画、Q 弹、甩飞、好感、大小），只是这三项拿不到数据。
 
 ---
 
 ## 安装
 
-1. 下载 `pet-5.3.apk`（见文末「下载」）；
+1. 下载 `pet-5.3.1.apk`（见文末「下载」）；
 2. 点击安装，首次需允许「安装未知应用」；
 3. 打开「桌宠」→ 点「授予悬浮窗权限」→ 在系统设置里允许「显示在其他应用上层」；
 4. Android 13+ 建议允许通知权限（前台服务通知，可设为静默）；
@@ -445,7 +455,7 @@ app/src/main/
 
 ## 致谢
 
-- 桌宠素材与网页端实现：[dsh-pet](https://github.com/PC2005-cloud/dsh-pet)
+- 桌宠素材与网页端实现、以及状态/余额/碎碎念数据源：[dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（喜欢的话欢迎给作者点个 ⭐ Star）
 - 字体：站酷快乐体（ZCOOL KuaiLe，免费可商用）
 - 运行环境：[DeepSeek Harness](https://github.com/deepseek-ai/dsh)
 - Android 客户端：[DSHA](https://github.com/DSH-APP/DSHA)
@@ -460,7 +470,6 @@ app/src/main/
 
 - GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
 - APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3.1/pet-5.3.1.apk>
-- 插件直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3.1/dsh-pet-bridge-6.0.0-min.zip>
 
 > 国内访问慢可以用酷安附件或网盘镜像。
 
@@ -472,10 +481,6 @@ app/src/main/
 文件名：pet-5.3.1.apk
 大小：55,717,504 字节
 MD5：44e8c0938e7e6e295dd06863aa3da0f9
-
-文件名：dsh-pet-bridge-6.0.0-min.zip
-大小：1,429,130 字节
-MD5：9b623eaa73bab4047e08bd7663d7f25b
 ```
 
 安装前建议核对 MD5，避免下载到被二次打包的版本。
