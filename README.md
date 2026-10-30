@@ -71,6 +71,7 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 | 物理 | 甩飞 | 拖动后快速松手，宠物按速度飞出去，撞屏幕边缘真实反射，线性减速停稳 |
 | 物理 | 接住 | 飞行途中点一下即可接住，好感 +2 |
 | 养成 | 好感度 | 单击 +1、接住 +2，本地持久化，每 20 点升一级 |
+| 支持 | 赞赏作者 | 长按菜单「赞赏一下 ♥」弹出微信赞赏码，扫码请作者喝奶茶 |
 | 自定义 | 大小调节 | 菜单「大小」→ 滑块 50%–200% 实时缩放，只影响宠物，不影响气泡和菜单 |
 | 稳定性 | 静默操纵 | 拖动 / 甩飞 / 点击期间冻结动画，只做物理运动，动作播完 1.2 秒后恢复随机待机 |
 | 适配 | 自动检测 DSHA | 没装 DSHA 时隐藏四项联动菜单，主界面给出下载入口；装了自动恢复 |
@@ -141,9 +142,32 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 
 ---
 
+## 数据插件（状态 / 余额 / 碎碎念的数据源）
+
+三项联动数据来自一个跑在 DSH 里的轻量插件 **dsh-pet-bridge**（约 1.8 MB，源码在 [plugin/](plugin/)，说明见 [plugin/README.md](plugin/README.md)）：
+
+```sh
+# 装插件（DSHA 终端里执行）
+unzip -o /sdcard/Download/DSHA/dsh-pet-bridge-6.0.0-min.zip -d /tmp/pet
+sh /tmp/pet/dsh-pet-bridge/install.sh
+# 重启 DSHA
+```
+
+验证：`curl -s http://127.0.0.1:38859/dsh-pet-7340/state` 返回带 `"sections"` 的 JSON。
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /dsh-pet-7340/state` | 工作状态 / 余额缓存 / 会话事件 / 宠物语录 |
+| `POST /dsh-pet-7340/balance` | 触发余额刷新 |
+| `POST /dsh-pet-7340/whisper?pet=main&surface=web` | 生成碎碎念 |
+
+> 插件派生自 dsh-pet，已裁掉网页端、Electron 助手、53 MB 动画素材与 50 MB 依赖，只保留三条数据路由。没装插件时桌宠本体照常，只是这三项拿不到数据。
+
+---
+
 ## 安装
 
-1. 下载 `pet-5.0.apk`（见文末「下载」）；
+1. 下载 `pet-5.3.apk`（见文末「下载」）；
 2. 点击安装，首次需允许「安装未知应用」；
 3. 打开「桌宠」→ 点「授予悬浮窗权限」→ 在系统设置里允许「显示在其他应用上层」；
 4. Android 13+ 建议允许通知权限（前台服务通知，可设为静默）；
@@ -207,6 +231,7 @@ DSH（DeepSeek Harness）自带的桌宠是一个网页组件，只在浏览器�
 | 显示位置 ▸ | 总是 | 仅网页 / 仅桌面 / 两者 / 都不 |
 | 回到初始位置 | 总是 | 回到第一次出现的位置 |
 | 好感度 | 总是 | 显示 `♥ 好感 Lv.x  n 点` |
+| 赞赏一下 ♥ | 总是 | 弹出微信赞赏码，扫码支持作者 |
 | 退出桌宠 | 总是 | 关闭悬浮窗和前台服务 |
 
 ### 大小调节
@@ -397,6 +422,9 @@ app/src/main/
 
 完整记录见 [CHANGELOG.md](CHANGELOG.md)，近期版本：
 
+- **5.3** 新增「赞赏一下 ♥」：长按菜单弹出微信赞赏码
+- **5.2** 只看桌宠开关、START_STICKY + onTaskRemoved 自重启、省电白名单按钮、插件缺失自动降级
+- **5.1** IPv6 回环扫描、自动全端口兜底、失败状态三档提示
 - **5.0** DSH 端点自动发现：手动 / 缓存 / 本机扫描 / 深度查找四级发现，握手校验，断线自愈带动画退避
 - **4.3** 自动检测 DSHA：未安装时隐藏状态 / 余额 / 碎碎念，并在主界面与菜单给出下载入口
 - **4.2** 主界面重做：渐变背景、头像卡、状态卡、圆角按钮、玩法说明
@@ -428,10 +456,11 @@ app/src/main/
 
 ## 下载
 
-**最新版：v5.0（versionCode 35）**
+**最新版：v5.3（versionCode 38）**
 
 - GitHub Releases：<https://github.com/gqpG10/dsh-pet-android/releases/latest>
-- 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.0/pet-5.0.apk>
+- APK 直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3/pet-5.3.apk>
+- 插件直链：<https://github.com/gqpG10/dsh-pet-android/releases/download/v5.3/dsh-pet-bridge-6.0.0-min.zip>
 
 > 国内访问慢可以用酷安附件或网盘镜像。
 
@@ -440,9 +469,13 @@ app/src/main/
 文件校验：
 
 ```
-文件名：pet-5.0.apk
-大小：55,590,465 字节
-MD5：4f66124c6fcfefd2207129df03e93e2c
+文件名：pet-5.3.apk
+大小：55,713,408 字节
+MD5：970590b29d27e6eb8a526883be388705
+
+文件名：dsh-pet-bridge-6.0.0-min.zip
+大小：1,429,130 字节
+MD5：9b623eaa73bab4047e08bd7663d7f25b
 ```
 
 安装前建议核对 MD5，避免下载到被二次打包的版本。
