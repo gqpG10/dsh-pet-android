@@ -22,14 +22,18 @@ java -cp "$D8JAR" com.android.tools.r8.D8 --release --min-api 26 \
   --lib "$AJ" --output build/dex build/classes/com/dsha/pet/*.class
 
 # 3. dex into apk, align, sign
+# 签名证书放在仓库根目录、跨次构建复用：否则每次重建都换钥匙，
+# 已装机的旧版本会因为签名不同而无法覆盖安装（只能卸载重装、丢存档）。
+KS=/root/dsh-pet-android/signing/debug.keystore
+mkdir -p /root/dsh-pet-android/signing
+[ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -alias debug \
+  -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android \
+  -dname "CN=Pet, OU=Dev, O=DSHA, L=CN, ST=CN, C=CN" >/dev/null 2>&1
 cd build
 cp base.apk unsigned.apk
 (cd dex && zip -0 -u ../unsigned.apk classes.dex >/dev/null)
 zipalign -f 4 unsigned.apk aligned.apk
-[ -f debug.keystore ] || keytool -genkeypair -keystore debug.keystore -alias debug \
-  -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android \
-  -dname "CN=Pet, OU=Dev, O=DSHA, L=CN, ST=CN, C=CN" >/dev/null 2>&1
-apksigner sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
+apksigner sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --out pet.apk aligned.apk
 apksigner verify pet.apk
 ls -la pet.apk

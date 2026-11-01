@@ -1,13 +1,18 @@
 package com.dsha.pet;
 
+import android.app.AlarmManager;
 import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
@@ -17,6 +22,7 @@ import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.IBinder;
 import android.os.Looper;
@@ -91,6 +97,8 @@ public class PetService extends Service {
     private float petScale = 1f;
     private int curAnimIdx = 0;
     private float dragDist;
+    /** lp 坐标与 getLocationOnScreen 之间的固定偏移（状态栏），仅用于诊断。 */
+    private int locOffX = Integer.MIN_VALUE, locOffY = Integer.MIN_VALUE;
     private int startLpX, startLpY;
     private long downTime;
     private long lastTapUp = 0;
@@ -113,6 +121,15 @@ public class PetService extends Service {
     private SharedPreferences prefs;
     private boolean linkMode;
     private static volatile PetService inst;
+    /** 联动暂停（仅停轮询，桌宠本体照常） */
+    private volatile boolean pausedLink = false;
+    /** 自适应轮询间隔：亮屏 2s，灭屏 10s */
+    private volatile int pollInterval = 2000;
+    private int baseInterval = 5000;
+    private boolean screenOn = true;
+    private int beatTick = 0;
+    private static final String ACTION_PAUSE = "com.dsha.pet.PAUSE";
+    private static final String ACTION_STOP = "com.dsha.pet.STOP";
     private volatile boolean pluginMissing;
     private int affection;
     private Vibrator vib;
@@ -160,7 +177,9 @@ public class PetService extends Service {
             y = Math.max(minY, Math.min(maxY, y));
             if (hit) {
                 // 墙只做反射，不补充能量：撞完照样按线性减速走
+                // 撞墙：Q 弹反馈
                 js("window.petBounce && petBounce(" + JSONObject.quote(dir) + ")");
+                buzz(8);
                 buzz(8);
             }
             int nx = Math.round(x), ny = Math.round(y);
@@ -177,7 +196,8 @@ public class PetService extends Service {
                 flying = false;
                 flyVx = 0;
                 flyVy = 0;
-                js("window.petResume && petResume()");
+                // 停稳后才解冻并抽一个随机动作；飞行/撞墙期间保持静默静帧
+                js("window.petSettleRandom && petSettleRandom()");
             } else {
                 web.postOnAnimation(this);
             }
@@ -237,8 +257,50 @@ public class PetService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // 启动时把构建与渲染参数写进日志，便于确认装的是哪一版、缩放基准对不对
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            logPoll("BOOT ver=" + pi.versionName + "(" + pi.versionCode + ")"
+                    + " d=" + getResources().getDisplayMetrics().density
+                    + " petScale=" + petScale + " K=" + K);
+        } catch (Exception ignored) {
+        }
+        if (intent != null) {
+            String a = intent.getAction();
+            if (ACTION_STOP.equals(a)) {
+                prefs.edit().putBoolean("enabled", false).apply();
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            if (ACTION_PAUSE.equals(a)) {
+                pausedLink = !pausedLink;
+                prefs.edit().putBoolean("pausedLink", pausedLink).apply();
+                updateNotification();
+                return START_STICKY;
+            }
+        }
+        prefs.edit().putBoolean("enabled", true).apply();
         return START_STICKY;
     }
+
+    private final BroadcastReceiver screenRx = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            String a = i.getAction();
+            if (Intent.ACTION_SCREEN_ON.equals(a)) {
+                screenOn = true;
+                pollInterval = baseInterval;
+                try { web.onResume(); web.resumeTimers(); } catch (Exception ignored) {}
+                js("window.petSleep && window.petSleep(false)");
+            } else if (Intent.ACTION_SCREEN_OFF.equals(a)) {
+                screenOn = false;
+                pollInterval = 10000;
+                // 灭屏：网页停 rAF + 停定时器 + 视频暂停解码，三重停机
+                js("window.petSleep && window.petSleep(true)");
+                try { web.onPause(); web.pauseTimers(); } catch (Exception ignored) {}
+            }
+        }
+    };
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
@@ -265,12 +327,14 @@ public class PetService extends Service {
         }
         prefs = getSharedPreferences("pet", MODE_PRIVATE);
         linkMode = prefs.getBoolean("linkMode", true);
+        pausedLink = prefs.getBoolean("pausedLink", false);
+        prefs.edit().putLong("lastBeat", System.currentTimeMillis()).apply();
         inst = this;
         ep = DshEndpoint.cached(this);
         DshEndpoint c0 = ep;
         discoveryStatus = c0 == null ? "正在查找 DSH…" : "上次端点 " + c0.host + ":" + c0.port;
         affection = prefs.getInt("affection", 0);
-        petScale = prefs.getFloat("petScale", 1f);
+        petScale = Math.max(0.5f, Math.min(2f, prefs.getFloat("petScale", 1f)));
         vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
         vt = VelocityTracker.obtain();
 
@@ -296,7 +360,8 @@ public class PetService extends Service {
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_PHONE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         lp.x = (int) (16 * d);
@@ -329,6 +394,7 @@ public class PetService extends Service {
                             js("window.petResume && petResume()");
                             js("window.petSquash && petSquash()");
                             showBubble("接住啦～", 2200);
+                            buzz(35);
                             addAffection(2, "♥ 接住 +2");
                             buzz(25);
                             return true;
@@ -379,7 +445,8 @@ public class PetService extends Service {
                                 startFly(vx, vy);
                                 return true;
                             }
-                            js("window.petResume && petResume()");
+                            // 普通拖动松手：回静默待机（不随机抽动作）
+                            js("window.petSettle && petSettle()");
                         }
                         if (menuShown) {
                             js("window.petResume && petResume()");
@@ -415,26 +482,23 @@ public class PetService extends Service {
             }
         });
 
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            NotificationChannel ch = new NotificationChannel("pet", "桌宠", NotificationManager.IMPORTANCE_MIN);
-            ch.setShowBadge(false);
-            nm.createNotificationChannel(ch);
-        }
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, "pet")
-                : new Notification.Builder(this);
-        b.setContentTitle("桌宠运行中 · 好感 Lv." + heartLevel())
-                .setContentText("单击Q弹 · 双击开DSH · 甩出去会飞 · 飞行中按一下接住")
-                .setSmallIcon(android.R.drawable.ic_menu_compass)
-                .setOngoing(true);
-        Notification n = b.build();
+        Notification n = buildNotification();
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
         } else {
             startForeground(1, n);
         }
 
+        try {
+            IntentFilter sf = new IntentFilter();
+            sf.addAction(Intent.ACTION_SCREEN_ON);
+            sf.addAction(Intent.ACTION_SCREEN_OFF);
+            registerReceiver(screenRx, sf);
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            pollInterval = (pm != null && pm.isInteractive()) ? 2000 : 10000;
+        } catch (Exception ignored) {
+        }
+        scheduleWatchdog();
         wm.addView(web, lp);
         ui.postDelayed(resumeTick, 800);
         final Thread poller = new Thread(new Runnable() {
@@ -465,6 +529,7 @@ public class PetService extends Service {
     private static final float FLY_DECEL = 480f; // px/s²，线性减速
     private static final float FLY_STOP = 40f;
     private JSONArray bboxes;
+    private JSONArray bodies;
     private int[] curRect = {0, 0, 640, 360};
 
     private void loadBboxes() {
@@ -479,6 +544,30 @@ public class PetService extends Service {
         } catch (Exception e) {
             bboxes = null;
         }
+        try {
+            java.io.InputStream in = getAssets().open("body.json");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            in.close();
+            bodies = new JSONArray(new String(bo.toByteArray(), "UTF-8"));
+        } catch (Exception e) {
+            bodies = null;
+        }
+    }
+
+    // 宠物本体（alpha 非透明）包围盒：每个动作的“模型”真实位置与大小
+    private int[] bodyFor(int idx) {
+        if (bodies != null && idx >= 0 && idx < bodies.length()) {
+            try {
+                JSONArray a = bodies.getJSONArray(idx);
+                int w = a.getInt(2), h = a.getInt(3);
+                if (w > 8 && h > 8) return new int[]{a.getInt(0), a.getInt(1), w, h};
+            } catch (Exception ignored) {
+            }
+        }
+        return rectFor(idx);
     }
 
     private int[] rectFor(int idx) {
@@ -494,19 +583,39 @@ public class PetService extends Service {
 
     public class PetHost {
         @JavascriptInterface
+        public void log(String m) {
+            logPoll("JS " + m);
+        }
+
+        @JavascriptInterface
         public void setAnim(final int idx) {
+            // 只记住目标动作，不动窗口：等新画面真的解码出帧后再整体切（见 applyBox）
+            ui.post(new Runnable() {
+                @Override
+                public void run() {
+                    curAnimIdx = idx;
+                }
+            });
+        }
+
+        // 网页那边已经拿到新帧，现在才把窗口几何切过去；同一次布局里网页会顺手换画面
+        @JavascriptInterface
+        public void applyBox(final int idx) {
             ui.post(new Runnable() {
                 @Override
                 public void run() {
                     curAnimIdx = idx;
                     applyAnimBox(idx);
+                    // 网页不再依赖 resize 事件（绘制用等比包含，窗口慢一拍也只缩不放），
+                    // 这里只做个回执，方便日志对时
+                    js("window.petBoxReady && window.petBoxReady(" + idx + ")");
                 }
             });
         }
     }
 
-    private void applyAnimBox(int idx) {
-        if (!alive || lp == null) return;
+    private boolean applyAnimBox(int idx) {
+        if (!alive || lp == null) return true;
         int[] r = rectFor(idx);
         float d = getResources().getDisplayMetrics().density;
         float PADW = 1.4f;
@@ -523,35 +632,35 @@ public class PetService extends Service {
         float PAD = 1f / 7f;
         float cw = Math.max(1, curRect[2]);
         float ch = Math.max(1, curRect[3]);
-        // 宠物锚点（视频坐标 320,200）在旧窗口中的相对位置
         float oldRx = PAD + (320 - curRect[0]) * (1 - 2 * PAD) / cw;
         float oldRy = PAD + (200 - curRect[1]) * (1 - 2 * PAD) / ch;
         if (Float.isNaN(anchorX)) {
             anchorX = lp.x + oldRx * lp.width;
             anchorY = lp.y + oldRy * lp.height;
         }
-        // 在新窗口中的相对位置
         float newRx = PAD + (320 - r[0]) * (1 - 2 * PAD) / Math.max(1, r[2]);
         float newRy = PAD + (200 - r[1]) * (1 - 2 * PAD) / Math.max(1, r[3]);
         int nx = Math.round(anchorX - newRx * nw);
         int ny = Math.round(anchorY - newRy * nh);
         int sw = getResources().getDisplayMetrics().widthPixels;
         int sh = getResources().getDisplayMetrics().heightPixels;
-        lp.width = nw;
-        lp.height = nh;
         int px = Math.max(0, Math.min(sw - nw, nx));
         int py = Math.max(0, Math.min(sh - nh, ny));
+        boolean same = (lp.width == nw && lp.height == nh && lp.x == px && lp.y == py);
+        lp.width = nw;
+        lp.height = nh;
         lp.x = px;
         lp.y = py;
-        // 从“实际落点”回写锚点：即使被屏幕边缘夹住，也不会在下次换动作时来回拉扯
         anchorX = px + newRx * nw;
         anchorY = py + newRy * nh;
         curRect = r;
-        wm.updateViewLayout(web, lp);
+        logPoll("BOX idx=" + idx + " r=" + r[0] + "," + r[1] + "," + r[2] + "," + r[3]
+                + " win=" + nw + "x" + nh + " at " + px + "," + py);
+        if (!same) wm.updateViewLayout(web, lp);
         js("window.petBox && window.petBox(" + r[0] + "," + r[1] + "," + r[2] + "," + r[3] + ")");
+        return same;
     }
 
-    /** 统一移动窗口：同时平移浮点锚点，避免取整误差累积造成“飘”。 */
     private void moveWindow(int x, int y) {
         if (lp == null || web == null) return;
         if (!Float.isNaN(anchorX)) {
@@ -591,7 +700,7 @@ public class PetService extends Service {
             JSONObject root = new JSONObject(body);
             JSONObject sections = root.optJSONObject("sections");
             if (sections == null) return null;
-            JSONObject bal = sections.optJSONObject("balance");
+        JSONObject bal = sections.optJSONObject("balance");
             if (bal == null) return null;
             JSONObject data = bal.optJSONObject("data");
             if (data == null || !data.optBoolean("ok", false)) return null;
@@ -796,7 +905,7 @@ public class PetService extends Service {
         }
         ls.add("动作 ▸"); ids.add(4);
         ls.add("大小 ▸"); ids.add(5);
-        ls.add("显示位置 ▸"); ids.add(6);
+        ls.add("插件 ▸"); ids.add(6);
         ls.add("回到初始位置"); ids.add(7);
         ls.add("好感度"); ids.add(8);
         ls.add("退出桌宠"); ids.add(9);
@@ -804,7 +913,7 @@ public class PetService extends Service {
             ls.add("获取 DSHA ↓"); ids.add(10);
         }
         final String[] labels = ls.toArray(new String[0]);
-        showPage("桌宠 · 好感 Lv." + heartLevel(), labels,
+        showPage("大肥鱼 · 好感 Lv." + heartLevel(), labels,
                 new Pick() {
                     @Override
                     public void on(int i) {
@@ -846,7 +955,7 @@ public class PetService extends Service {
                                 showSize();
                                 break;
                             case 6:
-                                showDisplay();
+                                showPlugin();
                                 break;
                             case 7:
                                 hideMenu();
@@ -1052,9 +1161,9 @@ public class PetService extends Service {
         ui.postDelayed(autoClose, 12000);
     }
 
-    private void showDisplay() {
-        final String[] ids = {"web", "desktop", "both", "none"};
-        showPage("显示位置", new String[]{"‹ 返回", "仅网页", "仅桌面", "两者都显示", "都不显示"},
+    /** 插件：看一眼数据源状态，或一键把 DSH 页面里的宠物藏掉（只当数据源）。 */
+    private void showPlugin() {
+        showPage("数据插件", new String[]{"‹ 返回", "检查插件状态", "设为都不显示"},
                 new Pick() {
                     @Override
                     public void on(int i) {
@@ -1062,17 +1171,50 @@ public class PetService extends Service {
                             showMenu();
                             return;
                         }
-                        final String id = ids[i - 1];
                         hideMenu();
-                        String body = "{\"id\":\"main\",\"display\":" + JSONObject.quote(id) + "}";
-                        postJson(base() + "/pet-display", body, new StrCb() {
-                            @Override
-                            public void on(String b) {
-                                showBubble(b == null ? "显示位置没改成：DSH 接口没响应" : "显示位置已改为 " + id, 2400);
-                            }
-                        });
+                        if (i == 1) {
+                            showBubble("查一下插件…", 1500);
+                            getJson(base() + "/config", new StrCb() {
+                                @Override
+                                public void on(String body) {
+                                    showBubble(describeDisplay(body), 6500);
+                                }
+                            });
+                        } else {
+                            postJson(base() + "/pet-display", "{\"id\":\"main\",\"display\":\"none\"}",
+                                    new StrCb() {
+                                        @Override
+                                        public void on(String b) {
+                                            showBubble(b == null
+                                                    ? "没改成：插件没响应（先确认 DSHA 在跑）"
+                                                    : "已设为不显示，DSH 页面里不会再冒出宠物", 4800);
+                                        }
+                                    });
+                        }
                     }
                 });
+    }
+
+    /** 把 /config 里的 display 值翻成人话。 */
+    private String describeDisplay(String body) {
+        if (body == null) return "插件没响应，先确认 DSHA 和 dsh-pet 插件都在跑";
+        try {
+            JSONObject main = new JSONObject(body).optJSONObject("main");
+            JSONArray pets = main == null ? null : main.optJSONArray("pets");
+            String disp = "none";
+            if (pets != null && pets.length() > 0) {
+                JSONObject p0 = pets.optJSONObject(0);
+                if (p0 != null) disp = p0.optString("display", "none");
+            }
+            String cn;
+            if ("none".equals(disp)) cn = "都不显示（推荐，只当数据源）";
+            else if ("web".equals(disp)) cn = "仅网页，DSH 页面里也会冒出宠物";
+            else if ("desktop".equals(disp)) cn = "仅桌面，网页端拿不到碎碎念";
+            else cn = "网页和桌面都显示";
+            return "插件正常 · " + cn;
+        } catch (Exception e) {
+            return "插件路由在，但配置读不出来：" + e;
+        }
     }
 
     /** 宠物旁边的独立小气泡（不压在宠物身上），自动避让屏幕边缘。 */
@@ -1348,6 +1490,15 @@ public class PetService extends Service {
 
     private void pollLoop() {
         while (alive) {
+            if ((++beatTick % 5) == 0) {
+                prefs.edit().putLong("lastBeat", System.currentTimeMillis()).apply();
+            }
+            if (pausedLink) {
+                discoveryStatus = "联动已暂停（点通知恢复）";
+                lastPoll = "已暂停";
+                sleepQuiet(2000);
+                continue;
+            }
             if (!linkMode) {
                 discoveryStatus = "只看桌宠模式（不连 DSH）";
                 lastPoll = "只看桌宠";
@@ -1426,7 +1577,7 @@ public class PetService extends Service {
                     DshEndpoint.invalidate(this);
                 }
             }
-            sleepQuiet(2000);
+            sleepQuiet(pollInterval);
         }
     }
 
@@ -1530,6 +1681,10 @@ public class PetService extends Service {
             if (data != null && !data.isNull("state")) state = data.optString("state", null);
         }
 
+        if ("thinking".equals(state) || "working".equals(state)) baseInterval = 2000;
+        else baseInterval = 5000;
+        if (screenOn) pollInterval = baseInterval;
+
         JSONObject bal = sections.optJSONObject("balance");
         if (bal != null) {
             JSONObject data = bal.optJSONObject("data");
@@ -1615,10 +1770,11 @@ public class PetService extends Service {
         }
 
         JSONObject push = new JSONObject();
-        if (state != null) push.put("state", state);
+        // 关键：state 为 null 也要推（用 JSON null），否则网页那边的 curWork 永远清不掉，
+        // 会一直以为"正在工作"，随机动作被永久闸住 —— 表现就是宠物卡在一个动作上不动。
+        push.put("state", state == null ? JSONObject.NULL : state);
         if (balance != null) push.put("balance", balance);
         if (notify != null) push.put("notify", notify);
-        if (push.length() == 0) return;
 
         final String js = "window.petUpdate && petUpdate(" + push.toString() + ")";
         ui.post(new Runnable() {
@@ -1627,6 +1783,61 @@ public class PetService extends Service {
                 if (web != null) web.evaluateJavascript(js, null);
             }
         });
+    }
+
+    private void scheduleWatchdog() {
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            Intent i = new Intent(this, WatchdogReceiver.class);
+            PendingIntent pi = PendingIntent.getBroadcast(this, 9, i,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            am.setInexactRepeating(AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 15 * 60 * 1000L,
+                    15 * 60 * 1000L, pi);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private Notification buildNotification() {
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            NotificationChannel ch = new NotificationChannel("pet", "大肥鱼桌宠", NotificationManager.IMPORTANCE_LOW);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+        PendingIntent open = PendingIntent.getActivity(this, 0,
+                new Intent(this, MainActivity.class),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, "pet")
+                : new Notification.Builder(this);
+        b.setContentTitle("大肥鱼桌宠运行中 · 好感 Lv." + heartLevel())
+                .setContentText(pausedLink
+                        ? "联动已暂停 · 桌宠仍在，点「继续联动」恢复"
+                        : "单击Q弹 · 双击开DSH · 甩出去会飞 · 飞行中按一下接住")
+                .setSmallIcon(android.R.drawable.ic_menu_compass)
+                .setContentIntent(open)
+                .setOngoing(true);
+        Intent pause = new Intent(this, PetService.class).setAction(ACTION_PAUSE);
+        b.addAction(new Notification.Action.Builder(
+                android.R.drawable.ic_media_pause,
+                pausedLink ? "继续联动" : "暂停联动",
+                PendingIntent.getService(this, 1, pause,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)).build());
+        Intent stop = new Intent(this, PetService.class).setAction(ACTION_STOP);
+        b.addAction(new Notification.Action.Builder(
+                android.R.drawable.ic_menu_close_clear_cancel, "停止",
+                PendingIntent.getService(this, 2, stop,
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)).build());
+        return b.build();
+    }
+
+    private void updateNotification() {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.notify(1, buildNotification());
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -1644,6 +1855,10 @@ public class PetService extends Service {
             } catch (Exception ignored) {
             }
             vt = null;
+        }
+        try {
+            unregisterReceiver(screenRx);
+        } catch (Exception ignored) {
         }
         if (net != null) net.shutdownNow();
         if (web != null) {

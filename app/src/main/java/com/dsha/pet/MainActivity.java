@@ -28,6 +28,7 @@ public class MainActivity extends Activity {
     private TextView debug;
     private TextView dshaValue;
     private TextView dshaBtn;
+    private android.widget.Switch linkSwitch;
     private TextView epValue;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Runnable refresh = new Runnable() {
@@ -88,13 +89,13 @@ public class MainActivity extends Activity {
         heroTextLp.leftMargin = dp(16);
 
         TextView title = new TextView(this);
-        title.setText("蓝毛小女仆");
+        title.setText("大肥鱼桌宠");
         title.setTextSize(21);
         title.setTextColor(0xFF3B3A5C);
         heroText.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("桌面陪伴 · 不需要 root");
+        subtitle.setText("吃饱了就赖在你桌面上·不需要 root");
         subtitle.setTextSize(12);
         subtitle.setTextColor(0xFF9A97B8);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
@@ -137,8 +138,20 @@ public class MainActivity extends Activity {
         rowEp.addView(epValue);
         cards.addView(rowEp, matchTop(dp(10)));
 
+        LinearLayout rowMode = row();
+        rowMode.addView(label("只看桌宠（不连 DSH）"), weightLp(1f));
+        linkSwitch = new android.widget.Switch(this);
+        linkSwitch.setChecked(!PetService.linkModeOn(this));
+        linkSwitch.setOnCheckedChangeListener((btn, checked) -> {
+            PetService.setLinkMode(MainActivity.this, !checked);
+            debug.setText(checked ? "只看桌宠模式" : "正在连接 DSH…");
+            debug.setTextColor(checked ? 0xFF9A97B8 : 0xFFF0973B);
+        });
+        rowMode.addView(linkSwitch);
+        cards.addView(rowMode, matchTop(dp(10)));
+
         // ---------- 主按钮 ----------
-        TextView start = pill("启动桌宠", 0xFFFFFFFF, true);
+        TextView start = pill("启动大肥鱼", 0xFFFFFFFF, true);
         start.setOnClickListener(v -> startPet());
         root.addView(start, matchTop(dp(20)));
 
@@ -146,6 +159,7 @@ public class MainActivity extends Activity {
         pair.setOrientation(LinearLayout.HORIZONTAL);
         TextView stop = pill("停止桌宠", 0xFF7B6BB5, false);
         stop.setOnClickListener(v -> {
+            getSharedPreferences("pet", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
             stopService(new Intent(this, PetService.class));
             status.setText("已停止");
             status.setTextColor(0xFF9A97B8);
@@ -203,6 +217,10 @@ public class MainActivity extends Activity {
                 .show());
         root.addView(deepBtn, matchTop(dp(10)));
 
+        TextView batt = pill(batteryText(), 0xFF7B6BB5, false);
+        batt.setOnClickListener(v -> requestIgnoreBattery(batt));
+        root.addView(batt, matchTop(dp(10)));
+
         TextView test = pill("测试 DSH 连接", 0xFF7B6BB5, false);
         test.setOnClickListener(v -> testDsh());
         root.addView(test, matchTop(dp(12)));
@@ -218,6 +236,15 @@ public class MainActivity extends Activity {
         tips.addView(tip("拖动甩出去 —— 会在屏幕上弹来弹去"));
         tips.addView(tip("双击 —— 打开 DSHA"));
         tips.addView(tip("长按 —— 呼出菜单（余额 / 碎碎念 / 大小 / 动作）"));
+
+        TextView donate = new TextView(this);
+        donate.setText("赞赏作者 ♥");
+        donate.setTextSize(12);
+        donate.setTextColor(0xFF9C8CD8);
+        donate.setGravity(Gravity.CENTER);
+        donate.setPadding(dp(10), dp(12), dp(10), dp(12));
+        donate.setOnClickListener(v -> showDonate());
+        root.addView(donate, matchTop(dp(14)));
 
         TextView footer = new TextView(this);
         footer.setText("v" + version() + " · 常驻不耗电 · 不依赖 ADB / Shizuku");
@@ -239,6 +266,46 @@ public class MainActivity extends Activity {
         }
 
         testDsh();
+    }
+
+    private void showDonate() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding(dp(18), dp(16), dp(18), dp(10));
+
+        TextView t1 = new TextView(this);
+        t1.setText("请我喝杯奶茶 ☕");
+        t1.setTextSize(17);
+        t1.setTextColor(0xFF4A4560);
+        t1.setGravity(Gravity.CENTER);
+        box.addView(t1);
+
+        ImageView iv = new ImageView(this);
+        try {
+            java.io.InputStream in = getAssets().open("donate.png");
+            iv.setImageDrawable(android.graphics.drawable.Drawable.createFromStream(in, "donate"));
+            in.close();
+        } catch (Exception ignored) {
+        }
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(dp(200), dp(200));
+        ilp.topMargin = dp(12);
+        box.addView(iv, ilp);
+
+        TextView t2 = new TextView(this);
+        t2.setText("微信扫码 · 感谢大佬支持 ♥");
+        t2.setTextSize(12);
+        t2.setTextColor(0xFF8D89AC);
+        t2.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams t2lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        t2lp.topMargin = dp(10);
+        box.addView(t2, t2lp);
+
+        new AlertDialog.Builder(this)
+                .setView(box)
+                .setPositiveButton("好的 ♥", null)
+                .show();
     }
 
     @Override
@@ -356,6 +423,30 @@ public class MainActivity extends Activity {
 
     private LinearLayout.LayoutParams weightLp(float w) {
         return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, w);
+    }
+
+    private String batteryText() {
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        boolean ok = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        return ok ? "已加入省电白名单 ✓" : "加入省电白名单（防后台被清）";
+    }
+
+    private void requestIgnoreBattery(TextView btn) {
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+            btn.setText("已加入省电白名单 ✓");
+            return;
+        }
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + getPackageName())));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception ignored) {
+            }
+        }
+        btn.postDelayed(() -> btn.setText(batteryText()), 1500);
     }
 
     private void setDsh(String s) {
@@ -497,6 +588,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 7);
         }
+        getSharedPreferences("pet", MODE_PRIVATE).edit().putBoolean("enabled", true).apply();
         startForegroundService(new Intent(this, PetService.class));
         status.setText("运行中");
         status.setTextColor(0xFF35B37E);

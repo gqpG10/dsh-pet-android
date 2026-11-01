@@ -27,6 +27,11 @@ public final class DshEndpoint {
     /** dsh-pet 插件固定的路由前缀（见插件源码 ROUTE_PREFIX）。 */
     public static final String PATH = "/dsh-pet-7340";
     public static final int DEFAULT_PORT = 38859;
+    /** 上次全端口扫描时间，避免短时间内反复空扫。 */
+    private static volatile long lastFullScanAt = 0;
+    /** 最近一次扫描中“端口开着但不是 DSH”的提示，供界面显示。 */
+    public static volatile String lastHint = null;
+    private static final Set<Integer> openPorts = java.util.Collections.synchronizedSet(new LinkedHashSet<Integer>());
 
     private static final String PREFS = "dsh_pet_endpoint";
     private static final String K_HOST = "ep_host";
@@ -44,7 +49,8 @@ public final class DshEndpoint {
     }
 
     public String base() {
-        return "http://" + host + ":" + port + PATH;
+        String h = host != null && host.contains(":") ? "[" + host + "]" : host;
+        return "http://" + h + ":" + port + PATH;
     }
 
     public String url(String suffix) {
@@ -81,6 +87,9 @@ public final class DshEndpoint {
     public static DshEndpoint resolveBlocking(Context ctx, boolean deep, Listener l) {
         SharedPreferences sp = prefs(ctx);
 
+        lastHint = null;
+        openPorts.clear();
+
         // 1) 手动指定：用户说了算，连不上也不自动覆盖
         String manual = sp.getString(K_MANUAL, null);
         if (manual != null && !manual.isEmpty()) {
@@ -113,27 +122,54 @@ public final class DshEndpoint {
         for (int p = 30000; p <= 61000; p++) seed.add(p);
         fast.addAll(seed);
         progress(l, "正在扫描本机端口（" + fast.size() + " 个）…");
-        DshEndpoint hit = scan(fast);
+        DshEndpoint hit = scan(fast, "127.0.0.1");
+        if (hit == null) {
+            progress(l, "IPv4 没找到，试试 IPv6 回环…");
+            hit = scan(fast, "::1");
+        }
         if (hit != null) {
             save(sp, hit);
             return hit;
         }
 
-        // 4) 全量兜底（仅深度查找时）
-        if (deep) {
+        // 4) 全量兜底：手动深度查找，或自动兜底（10 分钟内只做一次，避免反复空扫）
+        boolean full = deep || (System.currentTimeMillis() - lastFullScanAt > 10 * 60 * 1000L);
+        if (full) {
+            lastFullScanAt = System.currentTimeMillis();
             Set<Integer> rest = new LinkedHashSet<>();
             for (int p = 1024; p <= 65535; p++) {
                 if (p >= 30000 && p <= 61000) continue;
                 rest.add(p);
             }
             progress(l, "深度扫描剩余端口（" + rest.size() + " 个）…");
-            hit = scan(new ArrayList<>(rest));
+            hit = scan(new ArrayList<>(rest), "127.0.0.1");
+            if (hit == null) hit = scan(new ArrayList<>(rest), "::1");
             if (hit != null) {
                 save(sp, hit);
                 return hit;
             }
         }
+        // 5) 扫完仍没有：看看是不是 DSH 起着但插件没加载
+        for (int p : new ArrayList<>(openPorts)) {
+            if (looksLikeDsh("127.0.0.1", p) || looksLikeDsh("::1", p)) {
+                lastHint = "DSH 在运行，但桌宠插件没加载（端口 " + p + "）";
+                break;
+            }
+        }
         return null;
+    }
+
+    /** 最近一次扫描中 TCP 能连上的端口，用于界面诊断。 */
+    public static String openPortsSummary() {
+        if (openPorts.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (int p : new ArrayList<>(openPorts)) {
+            if (n++ > 0) sb.append("、");
+            sb.append(p);
+            if (n >= 6) { sb.append("…"); break; }
+        }
+        return sb.toString();
     }
 
     /** 单点探测：TCP 能连上且 /state 握手通过。 */
@@ -189,7 +225,7 @@ public final class DshEndpoint {
     // 扫描
     // ------------------------------------------------------------------
 
-    private static DshEndpoint scan(final List<Integer> ports) {
+    private static DshEndpoint scan(final List<Integer> ports, final String host) {
         final int threads = Math.min(128, Math.max(16, ports.size() / 64));
         final AtomicInteger idx = new AtomicInteger(0);
         final AtomicBoolean stop = new AtomicBoolean(false);
@@ -205,10 +241,11 @@ public final class DshEndpoint {
                         int port = ports.get(i);
                         Socket s = new Socket();
                         try {
-                            s.connect(new InetSocketAddress("127.0.0.1", port), 90);
-                            if (handshake(s, "127.0.0.1", port, 700)) {
+                            s.connect(new InetSocketAddress(host, port), 90);
+                            openPorts.add(port);
+                            if (handshake(s, host, port, 700)) {
                                 if (hit.compareAndSet(null,
-                                        new DshEndpoint("127.0.0.1", port, "scan"))) {
+                                        new DshEndpoint(host, port, "scan"))) {
                                     stop.set(true);
                                 }
                             }
